@@ -80,8 +80,16 @@ TEXT ·unpackInt32x1to16bitsNEON(SB), NOSPLIT, $0-56
 	BEQ neon_1bit
 	CMP $2, R3
 	BEQ neon_2bit
+	CMP $3, R3
+	BEQ neon_3bit
 	CMP $4, R3
 	BEQ neon_4bit
+	CMP $5, R3
+	BEQ neon_5bit
+	CMP $6, R3
+	BEQ neon_6bit
+	CMP $7, R3
+	BEQ neon_7bit
 	CMP $8, R3
 	BEQ neon_8bit
 	CMP $16, R3
@@ -209,6 +217,77 @@ neon_2bit_loop:
 	SUB R5, R1, R1
 	B scalar_fallback_entry
 
+neon_3bit:
+	// BitWidth 3: 8 int32 values packed in 3 bytes
+	// Process 8 values at a time using scalar operations
+
+	// Round down to multiple of 8 for processing
+	MOVD R1, R4
+	LSR $3, R4, R4      // R4 = len / 8
+	LSL $3, R4, R4      // R4 = aligned length (multiple of 8)
+
+	MOVD $0, R5
+	CMP $0, R4
+	BEQ scalar_fallback
+
+neon_3bit_loop:
+	// Load 3 bytes as 32-bit value (4th byte will be ignored)
+	// Bytes 0-2 contain: [val7:val6:val5:val4:val3:val2:val1:val0]
+	// Bits layout: [23:21][20:18][17:15][14:12][11:9][8:6][5:3][2:0]
+	MOVWU (R2), R6
+
+	// Value 0: bits 0-2
+	AND $7, R6, R7
+	MOVW R7, (R0)
+
+	// Value 1: bits 3-5
+	LSR $3, R6, R7
+	AND $7, R7, R7
+	MOVW R7, 4(R0)
+
+	// Value 2: bits 6-8
+	LSR $6, R6, R7
+	AND $7, R7, R7
+	MOVW R7, 8(R0)
+
+	// Value 3: bits 9-11
+	LSR $9, R6, R7
+	AND $7, R7, R7
+	MOVW R7, 12(R0)
+
+	// Value 4: bits 12-14
+	LSR $12, R6, R7
+	AND $7, R7, R7
+	MOVW R7, 16(R0)
+
+	// Value 5: bits 15-17
+	LSR $15, R6, R7
+	AND $7, R7, R7
+	MOVW R7, 20(R0)
+
+	// Value 6: bits 18-20
+	LSR $18, R6, R7
+	AND $7, R7, R7
+	MOVW R7, 24(R0)
+
+	// Value 7: bits 21-23
+	LSR $21, R6, R7
+	AND $7, R7, R7
+	MOVW R7, 28(R0)
+
+	// Advance pointers
+	ADD $3, R2, R2      // src += 3 bytes (8 values)
+	ADD $32, R0, R0     // dst += 8 int32 (32 bytes)
+	ADD $8, R5, R5      // index += 8
+
+	CMP R4, R5
+	BLT neon_3bit_loop
+
+	CMP R1, R5
+	BEQ neon_done
+	SUB R5, R1, R1
+	B scalar_fallback_entry
+
 neon_4bit:
 	// BitWidth 4: 4 int32 values packed in 2 bytes
 	// Process 4 values at a time using scalar operations
@@ -252,6 +331,198 @@ neon_4bit_loop:
 
 	CMP R4, R5
 	BLT neon_4bit_loop
+
+	CMP R1, R5
+	BEQ neon_done
+	SUB R5, R1, R1
+	B scalar_fallback_entry
+
+neon_5bit:
+	// BitWidth 5: 8 int32 values packed in 5 bytes
+	// Process 8 values at a time using scalar operations
+
+	// Round down to multiple of 8 for processing
+	MOVD R1, R4
+	LSR $3, R4, R4      // R4 = len / 8
+	LSL $3, R4, R4      // R4 = aligned length (multiple of 8)
+
+	MOVD $0, R5
+	CMP $0, R4
+	BEQ scalar_fallback
+
+neon_5bit_loop:
+	// Load 5 bytes as 64-bit value (upper bytes will be ignored)
+	// 8 values × 5 bits = 40 bits = 5 bytes
+	// Bits layout: [39:35][34:30][29:25][24:20][19:15][14:10][9:5][4:0]
+	MOVD (R2), R6
+
+	// Value 0: bits 0-4
+	AND $31, R6, R7
+	MOVW R7, (R0)
+
+	// Value 1: bits 5-9
+	LSR $5, R6, R7
+	AND $31, R7, R7
+	MOVW R7, 4(R0)
+
+	// Value 2: bits 10-14
+	LSR $10, R6, R7
+	AND $31, R7, R7
+	MOVW R7, 8(R0)
+
+	// Value 3: bits 15-19
+	LSR $15, R6, R7
+	AND $31, R7, R7
+	MOVW R7, 12(R0)
+
+	// Value 4: bits 20-24
+	LSR $20, R6, R7
+	AND $31, R7, R7
+	MOVW R7, 16(R0)
+
+	// Value 5: bits 25-29
+	LSR $25, R6, R7
+	AND $31, R7, R7
+	MOVW R7, 20(R0)
+
+	// Value 6: bits 30-34
+	LSR $30, R6, R7
+	AND $31, R7, R7
+	MOVW R7, 24(R0)
+
+	// Value 7: bits 35-39
+	LSR $35, R6, R7
+	AND $31, R7, R7
+	MOVW R7, 28(R0)
+
+	// Advance pointers
+	ADD $5, R2, R2      // src += 5 bytes (8 values)
+	ADD $32, R0, R0     // dst += 8 int32 (32 bytes)
+	ADD $8, R5, R5      // index += 8
+
+	CMP R4, R5
+	BLT neon_5bit_loop
+
+	CMP R1, R5
+	BEQ neon_done
+	SUB R5, R1, R1
+	B scalar_fallback_entry
+
+neon_6bit:
+	// BitWidth 6: 4 int32 values packed in 3 bytes
+	// Process 4 values at a time using scalar operations
+
+	MOVD R1, R4
+	LSR $2, R4, R4      // R4 = len / 4
+	LSL $2, R4, R4      // R4 = aligned length (multiple of 4)
+
+	MOVD $0, R5
+	CMP $0, R4
+	BEQ scalar_fallback
+
+neon_6bit_loop:
+	// Load 3 bytes as 32-bit value (4th byte will be ignored)
+	// 4 values × 6 bits = 24 bits = 3 bytes
+	// Bits layout: [23:18][17:12][11:6][5:0]
+	MOVWU (R2), R6
+
+	// Value 0: bits 0-5
+	AND $63, R6, R7
+	MOVW R7, (R0)
+
+	// Value 1: bits 6-11
+	LSR $6, R6, R7
+	AND $63, R7, R7
+	MOVW R7, 4(R0)
+
+	// Value 2: bits 12-17
+	LSR $12, R6, R7
+	AND $63, R7, R7
+	MOVW R7, 8(R0)
+
+	// Value 3: bits 18-23
+	LSR $18, R6, R7
+	AND $63, R7, R7
+	MOVW R7, 12(R0)
+
+	// Advance pointers
+	ADD $3, R2, R2      // src += 3 bytes (4 values)
+	ADD $16, R0, R0     // dst += 4 int32 (16 bytes)
+	ADD $4, R5, R5      // index += 4
+
+	CMP R4, R5
+	BLT neon_6bit_loop
+
+	CMP R1, R5
+	BEQ neon_done
+	SUB R5, R1, R1
+	B scalar_fallback_entry
+
+neon_7bit:
+	// BitWidth 7: 8 int32 values packed in 7 bytes
+	// Process 8 values at a time using scalar operations
+
+	// Round down to multiple of 8 for processing
+	MOVD R1, R4
+	LSR $3, R4, R4      // R4 = len / 8
+	LSL $3, R4, R4      // R4 = aligned length (multiple of 8)
+
+	MOVD $0, R5
+	CMP $0, R4
+	BEQ scalar_fallback
+
+neon_7bit_loop:
+	// Load 7 bytes as 64-bit value (8th byte will be ignored)
+	// 8 values × 7 bits = 56 bits = 7 bytes
+	// Bits layout: [55:49][48:42][41:35][34:28][27:21][20:14][13:7][6:0]
+	MOVD (R2), R6
+
+	// Value 0: bits 0-6
+	AND $127, R6, R7
+	MOVW R7, (R0)
+
+	// Value 1: bits 7-13
+	LSR $7, R6, R7
+	AND $127, R7, R7
+	MOVW R7, 4(R0)
+
+	// Value 2: bits 14-20
+	LSR $14, R6, R7
+	AND $127, R7, R7
+	MOVW R7, 8(R0)
+
+	// Value 3: bits 21-27
+	LSR $21, R6, R7
+	AND $127, R7, R7
+	MOVW R7, 12(R0)
+
+	// Value 4: bits 28-34
+	LSR $28, R6, R7
+	AND $127, R7, R7
+	MOVW R7, 16(R0)
+
+	// Value 5: bits 35-41
+	LSR $35, R6, R7
+	AND $127, R7, R7
+	MOVW R7, 20(R0)
+
+	// Value 6: bits 42-48
+	LSR $42, R6, R7
+	AND $127, R7, R7
+	MOVW R7, 24(R0)
+
+	// Value 7: bits 49-55
+	LSR $49, R6, R7
+	AND $127, R7, R7
+	MOVW R7, 28(R0)
+
+	// Advance pointers
+	ADD $7, R2, R2      // src += 7 bytes (8 values)
+	ADD $32, R0, R0     // dst += 8 int32 (32 bytes)
+	ADD $8, R5, R5      // index += 8
+
+	CMP R4, R5
+	BLT neon_7bit_loop
 
 	CMP R1, R5
 	BEQ neon_done
