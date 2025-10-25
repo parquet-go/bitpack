@@ -9,10 +9,14 @@ import (
 //go:noescape
 func unpackInt64Default(dst []int64, src []byte, bitWidth uint)
 
+//go:noescape
+func unpackInt64x1to32bitsARM64(dst []int64, src []byte, bitWidth uint)
+
 func unpackInt64(dst []int64, src []byte, bitWidth uint) {
-	// For ARM64, we'll use NEON instructions
-	// TODO: Implement NEON optimizations - using default for now
+	// For ARM64, use optimized scalar operations for common bit widths
 	switch {
+	case bitWidth <= 32:
+		unpackInt64x1to32bitsARM64(dst, src, bitWidth)
 	case bitWidth == 64:
 		copy(dst, unsafecast.Slice[int64](src))
 	default:
