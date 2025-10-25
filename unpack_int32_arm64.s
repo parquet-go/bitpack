@@ -60,12 +60,11 @@ test:
 	BNE loop
 	RET
 
-// unpackInt32x1to16bitsNEON implements NEON-optimized unpacking for bit widths 1-16
-// This simplified version handles byte-aligned cases (8, 16 bits) with NEON,
-// and falls back to scalar for complex cases.
+// unpackInt32x1to16bitsARM64 implements optimized unpacking for bit widths 1-16
+// Uses optimized scalar ARM64 operations with batched processing
 //
-// func unpackInt32x1to16bitsNEON(dst []int32, src []byte, bitWidth uint)
-TEXT ·unpackInt32x1to16bitsNEON(SB), NOSPLIT, $0-56
+// func unpackInt32x1to16bitsARM64(dst []int32, src []byte, bitWidth uint)
+TEXT ·unpackInt32x1to16bitsARM64(SB), NOSPLIT, $0-56
 	MOVD dst_base+0(FP), R0   // R0 = dst pointer
 	MOVD dst_len+8(FP), R1    // R1 = dst length
 	MOVD src_base+24(FP), R2  // R2 = src pointer
