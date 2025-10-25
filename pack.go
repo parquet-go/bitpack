@@ -14,30 +14,38 @@ func PackInt32(dst []byte, src []int32, bitWidth uint) {
 }
 
 func packInt32(dst []byte, src []int32, bitWidth uint) {
-	n := ByteCount(uint(len(src)) * bitWidth)
-	b := dst[:n]
-
-	for i := range b {
-		b[i] = 0
+	if bitWidth == 0 {
+		return
 	}
 
 	bitMask := uint32(1<<bitWidth) - 1
-	bitOffset := uint(0)
+	var buffer uint64
+	var bufferedBits uint
+	byteIndex := 0
 
 	for _, value := range src {
-		i := bitOffset / 32
-		j := bitOffset % 32
+		// Add value to buffer
+		buffer |= uint64(uint32(value)&bitMask) << bufferedBits
+		bufferedBits += bitWidth
 
-		lo := binary.LittleEndian.Uint32(dst[(i+0)*4:])
-		hi := binary.LittleEndian.Uint32(dst[(i+1)*4:])
+		// Flush complete 32-bit words
+		for bufferedBits >= 32 {
+			binary.LittleEndian.PutUint32(dst[byteIndex:], uint32(buffer))
+			buffer >>= 32
+			bufferedBits -= 32
+			byteIndex += 4
+		}
+	}
 
-		lo |= (uint32(value) & bitMask) << j
-		hi |= (uint32(value) >> (32 - j))
-
-		binary.LittleEndian.PutUint32(dst[(i+0)*4:], lo)
-		binary.LittleEndian.PutUint32(dst[(i+1)*4:], hi)
-
-		bitOffset += bitWidth
+	// Flush remaining bits
+	if bufferedBits > 0 {
+		// Only write the bytes we need
+		remainingBytes := (bufferedBits + 7) / 8
+		for i := uint(0); i < remainingBytes; i++ {
+			dst[byteIndex] = byte(buffer)
+			buffer >>= 8
+			byteIndex++
+		}
 	}
 }
 
@@ -51,30 +59,55 @@ func PackInt64(dst []byte, src []int64, bitWidth uint) {
 }
 
 func packInt64(dst []byte, src []int64, bitWidth uint) {
-	n := ByteCount(uint(len(src)) * bitWidth)
-	b := dst[:n]
-
-	for i := range b {
-		b[i] = 0
+	if bitWidth == 0 {
+		return
+	}
+	if bitWidth == 64 {
+		// Special case: no packing needed, direct copy
+		for i, v := range src {
+			binary.LittleEndian.PutUint64(dst[i*8:], uint64(v))
+		}
+		return
 	}
 
 	bitMask := uint64(1<<bitWidth) - 1
-	bitOffset := uint(0)
+	var bufferLo, bufferHi uint64
+	var bufferedBits uint
+	byteIndex := 0
 
 	for _, value := range src {
-		i := bitOffset / 64
-		j := bitOffset % 64
+		maskedValue := uint64(value) & bitMask
 
-		lo := binary.LittleEndian.Uint64(dst[(i+0)*8:])
-		hi := binary.LittleEndian.Uint64(dst[(i+1)*8:])
+		if bufferedBits+bitWidth <= 64 {
+			// Value fits entirely in low buffer
+			bufferLo |= maskedValue << bufferedBits
+			bufferedBits += bitWidth
+		} else {
+			// Value spans low and high buffers
+			bitsInLo := 64 - bufferedBits
+			bufferLo |= maskedValue << bufferedBits
+			bufferHi = maskedValue >> bitsInLo
+			bufferedBits += bitWidth
+		}
 
-		lo |= (uint64(value) & bitMask) << j
-		hi |= (uint64(value) >> (64 - j))
+		// Flush complete 64-bit words
+		for bufferedBits >= 64 {
+			binary.LittleEndian.PutUint64(dst[byteIndex:], bufferLo)
+			bufferLo = bufferHi
+			bufferHi = 0
+			bufferedBits -= 64
+			byteIndex += 8
+		}
+	}
 
-		binary.LittleEndian.PutUint64(dst[(i+0)*8:], lo)
-		binary.LittleEndian.PutUint64(dst[(i+1)*8:], hi)
-
-		bitOffset += bitWidth
+	// Flush remaining bits
+	if bufferedBits > 0 {
+		remainingBytes := (bufferedBits + 7) / 8
+		for i := uint(0); i < remainingBytes; i++ {
+			dst[byteIndex] = byte(bufferLo)
+			bufferLo >>= 8
+			byteIndex++
+		}
 	}
 }
 
