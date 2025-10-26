@@ -79,6 +79,58 @@ func TestUnpackInt64(t *testing.T) {
 	}
 }
 
+func FuzzUnpackUint64(f *testing.F) {
+	// Add seed corpus
+	f.Add(uint(10), uint(3), int64(6))
+	f.Add(uint(20), uint(8), int64(0))
+	f.Add(uint(30), uint(23), int64(-300))
+
+	f.Fuzz(func(t *testing.T, size uint, bitWidth uint, seed int64) {
+		src := make([]int64, size)
+		gen := rand.New(rand.NewSource(seed))
+		bitMask := int64(bitWidth<<1) - 1
+		for i := range src {
+			src[i] = gen.Int63() & bitMask
+		}
+
+		packed := make([]byte, size*8+bitpack.PaddingInt64)
+		bitpack.PackInt64(packed, src[:], bitWidth)
+
+		unpacked := make([]int64, size)
+		bitpack.UnpackInt64(unpacked[:], packed[:], bitWidth)
+
+		if !slices.Equal(unpacked, src) {
+			t.Fatalf("Roundtrip failed: got %v, want %v", unpacked, src)
+		}
+	})
+}
+
+func FuzzUnpackUint32(f *testing.F) {
+	// Add seed corpus
+	f.Add(uint(10), uint(3), int64(6))
+	f.Add(uint(20), uint(8), int64(0))
+	f.Add(uint(30), uint(23), int64(-300))
+
+	f.Fuzz(func(t *testing.T, size uint, bitWidth uint, seed int64) {
+		src := make([]int32, size)
+		gen := rand.New(rand.NewSource(seed))
+		bitMask := int32(bitWidth<<1) - 1
+		for i := range src {
+			src[i] = gen.Int31() & bitMask
+		}
+
+		packed := make([]byte, size*8+bitpack.PaddingInt64)
+		bitpack.PackInt32(packed, src[:], bitWidth)
+
+		unpacked := make([]int32, size)
+		bitpack.UnpackInt32(unpacked[:], packed[:], bitWidth)
+
+		if !slices.Equal(unpacked, src) {
+			t.Fatalf("Roundtrip failed: got %v, want %v", unpacked, src)
+		}
+	})
+}
+
 func BenchmarkUnpackInt32(b *testing.B) {
 	for bitWidth := uint(1); bitWidth <= 32; bitWidth++ {
 		block := [blockSize]int32{}
