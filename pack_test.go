@@ -3,7 +3,7 @@ package bitpack_test
 import (
 	"fmt"
 	"math/rand"
-	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/parquet-go/bitpack"
@@ -29,9 +29,9 @@ func TestPackInt32(t *testing.T) {
 
 				// Unpack and verify
 				unpacked := make([]int32, n)
-				bitpack.UnpackInt32(unpacked, packed[:size], bitWidth)
+				bitpack.UnpackInt32(unpacked, packed, bitWidth)
 
-				if !reflect.DeepEqual(block[:n], unpacked) {
+				if !slices.Equal(block[:n], unpacked) {
 					t.Fatalf("values mismatch for length=%d\nwant: %v\ngot:  %v", n, block[:n], unpacked)
 				}
 			}
@@ -59,9 +59,9 @@ func TestPackInt64(t *testing.T) {
 
 				// Unpack and verify
 				unpacked := make([]int64, n)
-				bitpack.UnpackInt64(unpacked, packed[:size], bitWidth)
+				bitpack.UnpackInt64(unpacked, packed, bitWidth)
 
-				if !reflect.DeepEqual(block[:n], unpacked) {
+				if !slices.Equal(block[:n], unpacked) {
 					t.Fatalf("values mismatch for length=%d\nwant: %v\ngot:  %v", n, block[:n], unpacked)
 				}
 			}
