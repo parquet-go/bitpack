@@ -26,7 +26,7 @@ func TestUnpackInt32(t *testing.T) {
 
 			size := (blockSize * bitWidth) / 8
 			buf := make([]byte, size+bitpack.PaddingInt32)
-			bitpack.PackInt32(buf, block[:], bitWidth)
+			bitpack.Pack(buf, block[:], bitWidth)
 
 			src := buf[:size]
 			dst := make([]int32, blockSize)
@@ -36,7 +36,7 @@ func TestUnpackInt32(t *testing.T) {
 					dst[i] = 0
 				}
 
-				bitpack.UnpackInt32(dst[:n], src, bitWidth)
+				bitpack.Unpack(dst[:n], src, bitWidth)
 
 				if !slices.Equal(block[:n], dst[:n]) {
 					t.Fatalf("values mismatch for length=%d\nwant: %v\ngot:  %v", n, block[:n], dst[:n])
@@ -59,7 +59,7 @@ func TestUnpackInt64(t *testing.T) {
 
 			size := (blockSize * bitWidth) / 8
 			buf := make([]byte, size+bitpack.PaddingInt64)
-			bitpack.PackInt64(buf, block[:], bitWidth)
+			bitpack.Pack(buf, block[:], bitWidth)
 
 			src := buf[:size]
 			dst := make([]int64, blockSize)
@@ -69,7 +69,7 @@ func TestUnpackInt64(t *testing.T) {
 					dst[i] = 0
 				}
 
-				bitpack.UnpackInt64(dst[:n], src, bitWidth)
+				bitpack.Unpack(dst[:n], src, bitWidth)
 
 				if !slices.Equal(block[:n], dst[:n]) {
 					t.Fatalf("values mismatch for length=%d\nwant: %v\ngot:  %v", n, block[:n], dst[:n])
@@ -94,10 +94,10 @@ func FuzzUnpackUint64(f *testing.F) {
 		}
 
 		packed := make([]byte, size*8+bitpack.PaddingInt64)
-		bitpack.PackInt64(packed, src[:], bitWidth)
+		bitpack.Pack(packed, src[:], bitWidth)
 
 		unpacked := make([]int64, size)
-		bitpack.UnpackInt64(unpacked[:], packed[:], bitWidth)
+		bitpack.Unpack(unpacked[:], packed[:], bitWidth)
 
 		if !slices.Equal(unpacked, src) {
 			t.Fatalf("Roundtrip failed: got %v, want %v", unpacked, src)
@@ -120,10 +120,10 @@ func FuzzUnpackUint32(f *testing.F) {
 		}
 
 		packed := make([]byte, size*8+bitpack.PaddingInt64)
-		bitpack.PackInt32(packed, src[:], bitWidth)
+		bitpack.Pack(packed, src[:], bitWidth)
 
 		unpacked := make([]int32, size)
-		bitpack.UnpackInt32(unpacked[:], packed[:], bitWidth)
+		bitpack.Unpack(unpacked[:], packed[:], bitWidth)
 
 		if !slices.Equal(unpacked, src) {
 			t.Fatalf("Roundtrip failed: got %v, want %v", unpacked, src)
@@ -135,14 +135,14 @@ func BenchmarkUnpackInt32(b *testing.B) {
 	for bitWidth := uint(1); bitWidth <= 32; bitWidth++ {
 		block := [blockSize]int32{}
 		buf := [4*blockSize + bitpack.PaddingInt32]byte{}
-		bitpack.PackInt32(buf[:], block[:], bitWidth)
+		bitpack.Pack(buf[:], block[:], bitWidth)
 
 		b.Run(fmt.Sprintf("bitWidth=%d", bitWidth), func(b *testing.B) {
 			dst := block[:]
 			src := buf[:]
 
 			for i := 0; i < b.N; i++ {
-				bitpack.UnpackInt32(dst, src, bitWidth)
+				bitpack.Unpack(dst, src, bitWidth)
 			}
 
 			b.SetBytes(4 * blockSize)
@@ -154,14 +154,14 @@ func BenchmarkUnpackInt64(b *testing.B) {
 	for bitWidth := uint(1); bitWidth <= 64; bitWidth++ {
 		block := [blockSize]int64{}
 		buf := [8*blockSize + bitpack.PaddingInt64]byte{}
-		bitpack.PackInt64(buf[:], block[:], bitWidth)
+		bitpack.Pack(buf[:], block[:], bitWidth)
 
 		b.Run(fmt.Sprintf("bitWidth=%d", bitWidth), func(b *testing.B) {
 			dst := block[:]
 			src := buf[:]
 
 			for i := 0; i < b.N; i++ {
-				bitpack.UnpackInt64(dst, src, bitWidth)
+				bitpack.Unpack(dst, src, bitWidth)
 			}
 
 			b.SetBytes(4 * blockSize)
