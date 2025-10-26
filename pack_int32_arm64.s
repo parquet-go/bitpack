@@ -107,6 +107,9 @@ TEXT ·packInt32NEON(SB), NOSPLIT, $0-56
 	// Handle bitWidth == 0
 	CBZ R3, neon_done
 
+	// Initialize processed count to 0
+	MOVD $0, R5
+
 	// Check if we have at least 4 values to process with NEON paths
 	CMP $4, R2
 	BLT neon_done  // Not enough values, return and let Go wrapper handle it
@@ -434,4 +437,26 @@ neon_8bit_loop:
 	BLT neon_8bit_loop
 
 neon_done:
+	// After NEON processing, handle any remainder with scalar code
+	// Check if there are remaining values to process
+	CMP R2, R5  // R5 = processed count, R2 = total length
+	BGE neon_ret  // If processed >= total, we're done
+
+	// Calculate remainder: adjust src/dst pointers and length
+	// Advance src pointer by (R5 * 4) bytes
+	LSL $2, R5, R16
+	ADD R16, R1, R1
+
+	// Calculate packed bytes for processed values and advance dst
+	MUL R3, R5, R16  // R16 = processed * bitWidth (in bits)
+	LSR $3, R16, R16  // R16 = packed bytes
+	ADD R16, R0, R0
+
+	// Update remaining length
+	SUB R5, R2, R2
+
+	// Jump to scalar implementation for remainder
+	B ·packInt32ARM64(SB)
+
+neon_ret:
 	RET
