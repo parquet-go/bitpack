@@ -10,71 +10,173 @@ TEXT ·unpackInt64Default(SB), NOSPLIT, $0-56
 	MOVD src_base+24(FP), R2  // R2 = src pointer
 	MOVD bitWidth+48(FP), R3  // R3 = bitWidth
 
-	MOVD $1, R4               // R4 = bitMask = (1 << bitWidth) - 1
-	LSL R3, R4, R4
-	SUB $1, R4, R4
-
+	// Initialize registers
 	MOVD $0, R5               // R5 = bitOffset
 	MOVD $0, R6               // R6 = index
-	B test
 
-loop:
-	MOVD R5, R7               // R7 = i = bitOffset / 32
-	LSR $5, R7, R7
+	// Check if length >= 4 for unrolled loop
+	CMP  $4, R1
+	BLT  scalar_loop_start
 
-	MOVD R5, R8               // R8 = j = bitOffset % 32
-	AND $31, R8, R8
+	// Calculate bitMask = (1 << bitWidth) - 1
+	MOVD $1, R4
+	LSL  R3, R4, R4
+	SUB  $1, R4, R4           // R4 = bitMask
 
-	LSL $2, R7, R16           // R16 = i * 4
-	MOVWU (R2)(R16), R9       // R9 = src[i] (load as 32-bit, zero-extend to 64)
-	MOVD R4, R10              // R10 = bitMask
-	LSL R8, R10, R10          // R10 = bitMask << j
-	AND R10, R9, R9           // R9 = src[i] & (bitMask << j)
-	LSR R8, R9, R9            // R9 = d = (src[i] & (bitMask << j)) >> j
+	// Calculate unrolled iterations: (length / 4) * 4
+	LSR  $2, R1, R16          // R16 = length / 4
+	CBZ  R16, scalar_loop_start
+	LSL  $2, R16, R16         // R16 = (length / 4) * 4
 
-	ADD R3, R8, R11           // R11 = j + bitWidth
-	CMP $32, R11
-	BLE check64               // if j+bitWidth <= 32, check if > 64
+unrolled_loop:
+	// Process 4 elements with instruction-level parallelism
+	// Use 64-bit loads for better performance
 
-	ADD $1, R7, R12           // R12 = i + 1
-	LSL $2, R12, R16          // R16 = (i + 1) * 4
-	MOVWU (R2)(R16), R13      // R13 = src[i+1]
+	// === Element 0 ===
+	LSR  $6, R5, R7           // i = bitOffset / 64
+	AND  $63, R5, R8          // j = bitOffset % 64
+	MOVD (R2)(R7<<3), R9      // load 64-bit word from src[i]
+	LSL  R8, R4, R10
+	AND  R10, R9, R9
+	LSR  R8, R9, R9
 
-	MOVD $32, R14             // R14 = k = 32 - j
-	SUB R8, R14, R14
+	// Check if value spans into next word
+	ADD  R8, R3, R11
+	CMP  $64, R11
+	BLE  store0
+	MOVD $64, R12
+	SUB  R8, R12, R12
+	ADD  $1, R7, R13
+	MOVD (R2)(R13<<3), R14
+	LSR  R12, R4, R15
+	AND  R15, R14, R14
+	LSL  R12, R14, R14
+	ORR  R14, R9, R9
 
-	MOVD R4, R15              // R15 = bitMask
-	LSR R14, R15, R15         // R15 = bitMask >> k
-	AND R15, R13, R13         // R13 = src[i+1] & (bitMask >> k)
-	LSL R14, R13, R13         // R13 = (src[i+1] & (bitMask >> k)) << k
-	ORR R13, R9, R9           // R9 = d | c
+store0:
+	ADD  R3, R5, R5           // bitOffset += bitWidth
+	MOVD R9, (R0)(R6<<3)
+	ADD  $1, R6, R6
 
-check64:
-	CMP $64, R11
-	BLE next                  // if j+bitWidth <= 64, skip to next
+	// === Element 1 ===
+	LSR  $6, R5, R7
+	AND  $63, R5, R8
+	MOVD (R2)(R7<<3), R9
+	LSL  R8, R4, R10
+	AND  R10, R9, R9
+	LSR  R8, R9, R9
 
-	ADD $2, R7, R12           // R12 = i + 2 (reuse R12)
-	LSL $2, R12, R16          // R16 = (i + 2) * 4
-	MOVWU (R2)(R16), R13      // R13 = src[i+2] (reuse R13)
+	ADD  R8, R3, R11
+	CMP  $64, R11
+	BLE  store1
+	MOVD $64, R12
+	SUB  R8, R12, R12
+	ADD  $1, R7, R13
+	MOVD (R2)(R13<<3), R14
+	LSR  R12, R4, R15
+	AND  R15, R14, R14
+	LSL  R12, R14, R14
+	ORR  R14, R9, R9
 
-	MOVD $64, R14             // R14 = k = 64 - j (reuse R14)
-	SUB R8, R14, R14
+store1:
+	ADD  R3, R5, R5
+	MOVD R9, (R0)(R6<<3)
+	ADD  $1, R6, R6
 
-	MOVD R4, R15              // R15 = bitMask (reuse R15)
-	LSR R14, R15, R15         // R15 = bitMask >> k
-	AND R15, R13, R13         // R13 = src[i+2] & (bitMask >> k)
-	LSL R14, R13, R13         // R13 = (src[i+2] & (bitMask >> k)) << k
-	ORR R13, R9, R9           // R9 = d | c
+	// === Element 2 ===
+	LSR  $6, R5, R7
+	AND  $63, R5, R8
+	MOVD (R2)(R7<<3), R9
+	LSL  R8, R4, R10
+	AND  R10, R9, R9
+	LSR  R8, R9, R9
 
-next:
-	LSL $3, R6, R16           // R16 = index * 8
-	MOVD R9, (R0)(R16)        // dst[index] = d (64-bit store)
-	ADD R3, R5, R5            // bitOffset += bitWidth
-	ADD $1, R6, R6            // index++
+	ADD  R8, R3, R11
+	CMP  $64, R11
+	BLE  store2
+	MOVD $64, R12
+	SUB  R8, R12, R12
+	ADD  $1, R7, R13
+	MOVD (R2)(R13<<3), R14
+	LSR  R12, R4, R15
+	AND  R15, R14, R14
+	LSL  R12, R14, R14
+	ORR  R14, R9, R9
 
-test:
-	CMP R1, R6
-	BNE loop
+store2:
+	ADD  R3, R5, R5
+	MOVD R9, (R0)(R6<<3)
+	ADD  $1, R6, R6
+
+	// === Element 3 ===
+	LSR  $6, R5, R7
+	AND  $63, R5, R8
+	MOVD (R2)(R7<<3), R9
+	LSL  R8, R4, R10
+	AND  R10, R9, R9
+	LSR  R8, R9, R9
+
+	ADD  R8, R3, R11
+	CMP  $64, R11
+	BLE  store3
+	MOVD $64, R12
+	SUB  R8, R12, R12
+	ADD  $1, R7, R13
+	MOVD (R2)(R13<<3), R14
+	LSR  R12, R4, R15
+	AND  R15, R14, R14
+	LSL  R12, R14, R14
+	ORR  R14, R9, R9
+
+store3:
+	ADD  R3, R5, R5
+	MOVD R9, (R0)(R6<<3)
+	ADD  $1, R6, R6
+
+	CMP  R16, R6
+	BLT  unrolled_loop
+
+	// Check if done
+	CMP  R1, R6
+	BEQ  done
+
+scalar_loop_start:
+	// Fallback scalar loop for remaining elements
+	MOVD $1, R4
+	LSL  R3, R4, R4
+	SUB  $1, R4, R4           // R4 = bitMask
+
+scalar_loop:
+	LSR  $6, R5, R7           // i = bitOffset / 64
+	AND  $63, R5, R8          // j = bitOffset % 64
+	MOVD (R2)(R7<<3), R9      // load 64-bit word
+	LSL  R8, R4, R10          // bitMask << j
+	AND  R10, R9, R9
+	LSR  R8, R9, R9           // extracted value
+
+	// Check for span
+	ADD  R8, R3, R11
+	CMP  $64, R11
+	BLE  scalar_next
+	MOVD $64, R12
+	SUB  R8, R12, R12         // k = 64 - j
+	ADD  $1, R7, R13
+	MOVD (R2)(R13<<3), R14
+	LSR  R12, R4, R15
+	AND  R15, R14, R14
+	LSL  R12, R14, R14
+	ORR  R14, R9, R9
+
+scalar_next:
+	MOVD R9, (R0)(R6<<3)      // dst[index] = d
+	ADD  R3, R5, R5           // bitOffset += bitWidth
+	ADD  $1, R6, R6           // index++
+
+scalar_test:
+	CMP  R1, R6
+	BNE  scalar_loop
+
+done:
 	RET
 
 // unpackInt64x1to32bitsARM64 implements optimized unpacking for bit widths 1-32
@@ -638,76 +740,180 @@ scalar_fallback_entry_int64:
 	// R3 = bitWidth
 	// R5 = elements already processed
 
-	// Fall back to scalar implementation for remaining elements
+	// Fall back to optimized implementation for remaining elements
 	CMP $0, R1
 	BEQ scalar_done_int64     // No remaining elements
 
-	MOVD $1, R4         // R4 = bitMask = (1 << bitWidth) - 1
+	// Check if we can do 4-way unrolled loop
+	CMP $4, R1
+	BLT scalar_single_int64
+
+	// Calculate bitMask
+	MOVD $1, R4
 	LSL R3, R4, R4
-	SUB $1, R4, R4
+	SUB $1, R4, R4      // R4 = bitMask
 
-	// bitOffset starts from 0 relative to current R2 position
-	MOVD $0, R6         // R6 = bitOffset (relative to current R2)
-	MOVD $0, R7         // R7 = index (within remaining elements)
-	B scalar_test_int64
+	// Calculate unrolled iterations: (remaining / 4) * 4
+	LSR $2, R1, R16
+	CBZ R16, scalar_single_int64
+	LSL $2, R16, R16    // R16 = (len / 4) * 4
 
-scalar_loop_int64:
-	MOVD R6, R8         // R8 = i = bitOffset / 32
-	LSR $5, R8, R8
+	MOVD $0, R6         // R6 = bitOffset
+	MOVD $0, R7         // R7 = index
 
-	MOVD R6, R9         // R9 = j = bitOffset % 32
-	AND $31, R9, R9
+scalar_unrolled_loop_int64:
+	// === Element 0 ===
+	LSR $6, R6, R8      // i = bitOffset / 64
+	AND $63, R6, R9     // j = bitOffset % 64
+	MOVD (R2)(R8<<3), R11  // load 64-bit word
+	LSL R9, R4, R12
+	AND R12, R11, R11
+	LSR R9, R11, R11
 
-	LSL $2, R8, R10     // R10 = i * 4
-	MOVWU (R2)(R10), R11  // R11 = src[i]
-	MOVD R4, R12        // R12 = bitMask
-	LSL R9, R12, R12    // R12 = bitMask << j
-	AND R12, R11, R11   // R11 = src[i] & (bitMask << j)
-	LSR R9, R11, R11    // R11 = d = (src[i] & (bitMask << j)) >> j
-
-	ADD R3, R9, R12     // R12 = j + bitWidth
-	CMP $32, R12
-	BLE scalar_check64_int64
-
-	ADD $1, R8, R13     // R13 = i + 1
-	LSL $2, R13, R10    // R10 = (i + 1) * 4
-	MOVWU (R2)(R10), R14  // R14 = src[i+1]
-
-	MOVD $32, R15       // R15 = k = 32 - j
-	SUB R9, R15, R15
-
-	MOVD R4, R16        // R16 = bitMask
-	LSR R15, R16, R16   // R16 = bitMask >> k
-	AND R16, R14, R14   // R14 = src[i+1] & (bitMask >> k)
-	LSL R15, R14, R14   // R14 = (src[i+1] & (bitMask >> k)) << k
-	ORR R14, R11, R11   // R11 = d | c
-
-scalar_check64_int64:
+	ADD R9, R3, R12
 	CMP $64, R12
-	BLE scalar_next_int64
+	BLE scalar_store0_int64
+	MOVD $64, R13
+	SUB R9, R13, R13
+	ADD $1, R8, R14
+	MOVD (R2)(R14<<3), R15
+	LSR R13, R4, R10
+	AND R10, R15, R15
+	LSL R13, R15, R15
+	ORR R15, R11, R11
 
-	ADD $2, R8, R13     // R13 = i + 2
-	LSL $2, R13, R10    // R10 = (i + 2) * 4
-	MOVWU (R2)(R10), R14  // R14 = src[i+2]
+scalar_store0_int64:
+	ADD R3, R6, R6
+	LSL $3, R7, R10
+	MOVD R11, (R0)(R10)
+	ADD $1, R7, R7
 
-	MOVD $64, R15       // R15 = k = 64 - j
-	SUB R9, R15, R15
+	// === Element 1 ===
+	LSR $6, R6, R8
+	AND $63, R6, R9
+	MOVD (R2)(R8<<3), R11
+	LSL R9, R4, R12
+	AND R12, R11, R11
+	LSR R9, R11, R11
 
-	MOVD R4, R16        // R16 = bitMask
-	LSR R15, R16, R16   // R16 = bitMask >> k
-	AND R16, R14, R14   // R14 = src[i+2] & (bitMask >> k)
-	LSL R15, R14, R14   // R14 = (src[i+2] & (bitMask >> k)) << k
-	ORR R14, R11, R11   // R11 = d | c
+	ADD R9, R3, R12
+	CMP $64, R12
+	BLE scalar_store1_int64
+	MOVD $64, R13
+	SUB R9, R13, R13
+	ADD $1, R8, R14
+	MOVD (R2)(R14<<3), R15
+	LSR R13, R4, R10
+	AND R10, R15, R15
+	LSL R13, R15, R15
+	ORR R15, R11, R11
 
-scalar_next_int64:
-	LSL $3, R7, R10     // R10 = index * 8
-	MOVD R11, (R0)(R10) // dst[index] = d (relative to current R0)
-	ADD R3, R6, R6      // bitOffset += bitWidth
-	ADD $1, R7, R7      // index++
+scalar_store1_int64:
+	ADD R3, R6, R6
+	LSL $3, R7, R10
+	MOVD R11, (R0)(R10)
+	ADD $1, R7, R7
 
-scalar_test_int64:
+	// === Element 2 ===
+	LSR $6, R6, R8
+	AND $63, R6, R9
+	MOVD (R2)(R8<<3), R11
+	LSL R9, R4, R12
+	AND R12, R11, R11
+	LSR R9, R11, R11
+
+	ADD R9, R3, R12
+	CMP $64, R12
+	BLE scalar_store2_int64
+	MOVD $64, R13
+	SUB R9, R13, R13
+	ADD $1, R8, R14
+	MOVD (R2)(R14<<3), R15
+	LSR R13, R4, R10
+	AND R10, R15, R15
+	LSL R13, R15, R15
+	ORR R15, R11, R11
+
+scalar_store2_int64:
+	ADD R3, R6, R6
+	LSL $3, R7, R10
+	MOVD R11, (R0)(R10)
+	ADD $1, R7, R7
+
+	// === Element 3 ===
+	LSR $6, R6, R8
+	AND $63, R6, R9
+	MOVD (R2)(R8<<3), R11
+	LSL R9, R4, R12
+	AND R12, R11, R11
+	LSR R9, R11, R11
+
+	ADD R9, R3, R12
+	CMP $64, R12
+	BLE scalar_store3_int64
+	MOVD $64, R13
+	SUB R9, R13, R13
+	ADD $1, R8, R14
+	MOVD (R2)(R14<<3), R15
+	LSR R13, R4, R10
+	AND R10, R15, R15
+	LSL R13, R15, R15
+	ORR R15, R11, R11
+
+scalar_store3_int64:
+	ADD R3, R6, R6
+	LSL $3, R7, R10
+	MOVD R11, (R0)(R10)
+	ADD $1, R7, R7
+
+	CMP R16, R7
+	BLT scalar_unrolled_loop_int64
+
+	// Check if done
 	CMP R1, R7
-	BLT scalar_loop_int64
+	BEQ scalar_done_int64
+
+	// Preserve R6 (bitOffset), R4 (bitMask), and R7 (index) for tail processing
+	// R1 still contains total count, R7 has current index
+	B scalar_loop_single_int64
+
+scalar_single_int64:
+	// Process remaining elements one at a time
+	MOVD $1, R4
+	LSL R3, R4, R4
+	SUB $1, R4, R4      // R4 = bitMask
+
+	MOVD $0, R6         // R6 = bitOffset
+	MOVD $0, R7         // R7 = index
+
+scalar_loop_single_int64:
+	LSR $6, R6, R8      // i = bitOffset / 64
+	AND $63, R6, R9     // j = bitOffset % 64
+	MOVD (R2)(R8<<3), R11  // load 64-bit word
+	LSL R9, R4, R12
+	AND R12, R11, R11
+	LSR R9, R11, R11
+
+	ADD R9, R3, R12
+	CMP $64, R12
+	BLE scalar_next_single_int64
+	MOVD $64, R13
+	SUB R9, R13, R13
+	ADD $1, R8, R14
+	MOVD (R2)(R14<<3), R15
+	LSR R13, R4, R10
+	AND R10, R15, R15
+	LSL R13, R15, R15
+	ORR R15, R11, R11
+
+scalar_next_single_int64:
+	LSL $3, R7, R10
+	MOVD R11, (R0)(R10)
+	ADD R3, R6, R6
+	ADD $1, R7, R7
+
+	CMP R1, R7
+	BLT scalar_loop_single_int64
 
 scalar_done_int64:
 	RET
