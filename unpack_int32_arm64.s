@@ -60,12 +60,11 @@ test:
 	BNE loop
 	RET
 
-// unpackInt32x1to16bitsNEON implements NEON-optimized unpacking for bit widths 1-16
-// This simplified version handles byte-aligned cases (8, 16 bits) with NEON,
-// and falls back to scalar for complex cases.
+// unpackInt32x1to16bitsARM64 implements optimized unpacking for bit widths 1-16
+// Uses optimized scalar ARM64 operations with batched processing
 //
-// func unpackInt32x1to16bitsNEON(dst []int32, src []byte, bitWidth uint)
-TEXT ·unpackInt32x1to16bitsNEON(SB), NOSPLIT, $0-56
+// func unpackInt32x1to16bitsARM64(dst []int32, src []byte, bitWidth uint)
+TEXT ·unpackInt32x1to16bitsARM64(SB), NOSPLIT, $0-56
 	MOVD dst_base+0(FP), R0   // R0 = dst pointer
 	MOVD dst_len+8(FP), R1    // R1 = dst length
 	MOVD src_base+24(FP), R2  // R2 = src pointer
@@ -705,3 +704,29 @@ scalar_test:
 
 scalar_done:
 	RET
+
+// Macro definitions for unsupported NEON instructions using WORD encodings
+// USHLL Vd.8H, Vn.8B, #0 - widen 8x8-bit to 8x16-bit
+#define USHLL_8H_8B(vd, vn) WORD $(0x2f08a400 | (vd) | ((vn)<<5))
+
+// USHLL2 Vd.8H, Vn.16B, #0 - widen upper 8x8-bit to 8x16-bit
+#define USHLL2_8H_16B(vd, vn) WORD $(0x6f08a400 | (vd) | ((vn)<<5))
+
+// USHLL Vd.4S, Vn.4H, #0 - widen 4x16-bit to 4x32-bit
+#define USHLL_4S_4H(vd, vn) WORD $(0x2f10a400 | (vd) | ((vn)<<5))
+
+// USHLL2 Vd.4S, Vn.8H, #0 - widen upper 4x16-bit to 4x32-bit
+#define USHLL2_4S_8H(vd, vn) WORD $(0x6f10a400 | (vd) | ((vn)<<5))
+
+// USHLL Vd.2D, Vn.2S, #0 - widen 2x32-bit to 2x64-bit
+#define USHLL_2D_2S(vd, vn) WORD $(0x2f20a400 | (vd) | ((vn)<<5))
+
+// USHLL2 Vd.2D, Vn.4S, #0 - widen upper 2x32-bit to 2x64-bit
+#define USHLL2_2D_4S(vd, vn) WORD $(0x6f20a400 | (vd) | ((vn)<<5))
+
+// Bit expansion lookup table defined in bitexpand_table_arm64.s
+
+// unpackInt32x1bitNEON implements table-based NEON unpacking for bitWidth=1
+// Uses lookup tables for parallel bit expansion
+//
+// func unpackInt32x1bitNEON(dst []int32, src []byte, bitWidth uint)
