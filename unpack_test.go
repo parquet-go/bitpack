@@ -86,6 +86,9 @@ func FuzzUnpackUint64(f *testing.F) {
 	f.Add(uint(30), uint(23), int64(-300))
 
 	f.Fuzz(func(t *testing.T, size uint, bitWidth uint, seed int64) {
+		if bitWidth == 0 || bitWidth > 64 {
+			return
+		}
 		src := make([]int64, size)
 		gen := rand.New(rand.NewSource(seed))
 		bitMask := int64(bitWidth<<1) - 1
@@ -112,6 +115,9 @@ func FuzzUnpackUint32(f *testing.F) {
 	f.Add(uint(30), uint(23), int64(-300))
 
 	f.Fuzz(func(t *testing.T, size uint, bitWidth uint, seed int64) {
+		if bitWidth == 0 || bitWidth > 32 {
+			return
+		}
 		src := make([]int32, size)
 		gen := rand.New(rand.NewSource(seed))
 		bitMask := int32(bitWidth<<1) - 1
