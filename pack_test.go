@@ -25,11 +25,11 @@ func TestPackInt32(t *testing.T) {
 				// Pack the values
 				size := bitpack.ByteCount(uint(n) * bitWidth)
 				packed := make([]byte, size+bitpack.PaddingInt32)
-				bitpack.PackInt32(packed, block[:n], bitWidth)
+				bitpack.Pack(packed, block[:n], bitWidth)
 
 				// Unpack and verify
 				unpacked := make([]int32, n)
-				bitpack.UnpackInt32(unpacked, packed, bitWidth)
+				bitpack.Unpack(unpacked, packed, bitWidth)
 
 				if !slices.Equal(block[:n], unpacked) {
 					t.Fatalf("values mismatch for length=%d\nwant: %v\ngot:  %v", n, block[:n], unpacked)
@@ -55,11 +55,11 @@ func TestPackInt64(t *testing.T) {
 				// Pack the values
 				size := bitpack.ByteCount(uint(n) * bitWidth)
 				packed := make([]byte, size+bitpack.PaddingInt64)
-				bitpack.PackInt64(packed, block[:n], bitWidth)
+				bitpack.Pack(packed, block[:n], bitWidth)
 
 				// Unpack and verify
 				unpacked := make([]int64, n)
-				bitpack.UnpackInt64(unpacked, packed, bitWidth)
+				bitpack.Unpack(unpacked, packed, bitWidth)
 
 				if !slices.Equal(block[:n], unpacked) {
 					t.Fatalf("values mismatch for length=%d\nwant: %v\ngot:  %v", n, block[:n], unpacked)
@@ -86,7 +86,7 @@ func BenchmarkPackInt32(b *testing.B) {
 			src := block[:]
 
 			for i := 0; i < b.N; i++ {
-				bitpack.PackInt32(dst, src, bitWidth)
+				bitpack.Pack(dst, src, bitWidth)
 			}
 
 			b.SetBytes(4 * blockSize)
@@ -114,7 +114,7 @@ func BenchmarkPackInt64(b *testing.B) {
 			src := block[:]
 
 			for i := 0; i < b.N; i++ {
-				bitpack.PackInt64(dst, src, bitWidth)
+				bitpack.Pack(dst, src, bitWidth)
 			}
 
 			b.SetBytes(8 * blockSize)
