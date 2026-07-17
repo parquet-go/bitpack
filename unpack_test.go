@@ -17,11 +17,11 @@ func TestUnpackInt32(t *testing.T) {
 	for bitWidth := uint(1); bitWidth <= 32; bitWidth++ {
 		t.Run(fmt.Sprintf("bitWidth=%d", bitWidth), func(t *testing.T) {
 			block := [blockSize]int32{}
-			bitMask := int32(bitWidth<<1) - 1
+			bitMask := int32(uint32(1)<<bitWidth - 1)
 
 			prng := rand.New(rand.NewSource(0))
 			for i := range block {
-				block[i] = prng.Int31() & bitMask
+				block[i] = int32(prng.Uint32()) & bitMask
 			}
 
 			size := (blockSize * bitWidth) / 8
@@ -29,17 +29,20 @@ func TestUnpackInt32(t *testing.T) {
 			bitpack.Pack(buf, block[:], bitWidth)
 
 			src := buf[:size]
-			dst := make([]int32, blockSize)
+			dst := make([]int32, blockSize+1)
 
-			for n := 1; n <= blockSize; n++ {
+			for n := 0; n <= blockSize; n++ {
 				for i := range dst {
-					dst[i] = 0
+					dst[i] = -1
 				}
 
 				bitpack.Unpack(dst[:n], src, bitWidth)
 
 				if !slices.Equal(block[:n], dst[:n]) {
 					t.Fatalf("values mismatch for length=%d\nwant: %v\ngot:  %v", n, block[:n], dst[:n])
+				}
+				if dst[n] != -1 {
+					t.Fatalf("wrote beyond destination for length=%d", n)
 				}
 			}
 		})
@@ -47,14 +50,14 @@ func TestUnpackInt32(t *testing.T) {
 }
 
 func TestUnpackInt64(t *testing.T) {
-	for bitWidth := uint(1); bitWidth <= 63; bitWidth++ {
+	for bitWidth := uint(1); bitWidth <= 64; bitWidth++ {
 		t.Run(fmt.Sprintf("bitWidth=%d", bitWidth), func(t *testing.T) {
 			block := [blockSize]int64{}
-			bitMask := int64(bitWidth<<1) - 1
+			bitMask := int64(uint64(1)<<bitWidth - 1)
 
 			prng := rand.New(rand.NewSource(0))
 			for i := range block {
-				block[i] = prng.Int63() & bitMask
+				block[i] = int64(prng.Uint64()) & bitMask
 			}
 
 			size := (blockSize * bitWidth) / 8
@@ -62,11 +65,11 @@ func TestUnpackInt64(t *testing.T) {
 			bitpack.Pack(buf, block[:], bitWidth)
 
 			src := buf[:size]
-			dst := make([]int64, blockSize)
+			dst := make([]int64, blockSize+1)
 
-			for n := 1; n <= blockSize; n++ {
+			for n := 0; n <= blockSize; n++ {
 				for i := range dst {
-					dst[i] = 0
+					dst[i] = -1
 				}
 
 				bitpack.Unpack(dst[:n], src, bitWidth)
@@ -74,6 +77,35 @@ func TestUnpackInt64(t *testing.T) {
 				if !slices.Equal(block[:n], dst[:n]) {
 					t.Fatalf("values mismatch for length=%d\nwant: %v\ngot:  %v", n, block[:n], dst[:n])
 				}
+				if dst[n] != -1 {
+					t.Fatalf("wrote beyond destination for length=%d", n)
+				}
+			}
+		})
+	}
+}
+
+func TestUnpackZeroWidth(t *testing.T) {
+	for _, size := range []int{0, 7, 8, 9, blockSize} {
+		t.Run(fmt.Sprintf("int32/size=%d", size), func(t *testing.T) {
+			dst := make([]int32, size)
+			for i := range dst {
+				dst[i] = -1
+			}
+			bitpack.Unpack(dst, make([]byte, bitpack.PaddingInt32), 0)
+			if !slices.Equal(dst, make([]int32, size)) {
+				t.Fatalf("expected zeros, got %v", dst)
+			}
+		})
+
+		t.Run(fmt.Sprintf("int64/size=%d", size), func(t *testing.T) {
+			dst := make([]int64, size)
+			for i := range dst {
+				dst[i] = -1
+			}
+			bitpack.Unpack(dst, make([]byte, bitpack.PaddingInt64), 0)
+			if !slices.Equal(dst, make([]int64, size)) {
+				t.Fatalf("expected zeros, got %v", dst)
 			}
 		})
 	}
@@ -91,7 +123,7 @@ func FuzzUnpackUint64(f *testing.F) {
 		}
 		src := make([]int64, size)
 		gen := rand.New(rand.NewSource(seed))
-		bitMask := int64(bitWidth<<1) - 1
+		bitMask := int64(uint64(1)<<bitWidth - 1)
 		for i := range src {
 			src[i] = gen.Int63() & bitMask
 		}
@@ -120,12 +152,12 @@ func FuzzUnpackUint32(f *testing.F) {
 		}
 		src := make([]int32, size)
 		gen := rand.New(rand.NewSource(seed))
-		bitMask := int32(bitWidth<<1) - 1
+		bitMask := int32(uint32(1)<<bitWidth - 1)
 		for i := range src {
 			src[i] = gen.Int31() & bitMask
 		}
 
-		packed := make([]byte, size*8+bitpack.PaddingInt64)
+		packed := make([]byte, size*4+bitpack.PaddingInt32)
 		bitpack.Pack(packed, src[:], bitWidth)
 
 		unpacked := make([]int32, size)
@@ -170,7 +202,7 @@ func BenchmarkUnpackInt64(b *testing.B) {
 				bitpack.Unpack(dst, src, bitWidth)
 			}
 
-			b.SetBytes(4 * blockSize)
+			b.SetBytes(8 * blockSize)
 		})
 	}
 }

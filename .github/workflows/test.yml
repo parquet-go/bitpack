@@ -39,3 +39,15 @@ jobs:
         run: |
           go test -v -tags=${{ matrix.tags }} ./...
           cd examples && go test -v
+
+      - name: Run tests without AVX2
+        if: matrix.arch == 'amd64' && matrix.tags == ''
+        env:
+          GODEBUG: cpu.avx2=off
+        run: go test -v ./...
+
+      - name: Check generated files
+        if: matrix.arch == 'amd64' && matrix.tags == ''
+        run: |
+          go generate ./...
+          git diff --exit-code
