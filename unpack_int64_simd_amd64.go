@@ -51,8 +51,6 @@ type unpackInt64Permute struct {
 	shift1 [4]uint64
 }
 
-var unpackInt64Permutes [33]unpackInt64Permute
-
 // unpackInt64WidePermute holds the permutation and shift vectors used to
 // unpack 8 values of bit widths 33 to 63, in two groups of 4: group 1 reads
 // from a second load at the byte position of value 4. Each lane extracts
@@ -67,55 +65,6 @@ type unpackInt64WidePermute struct {
 	sl0     [4]uint64
 	sr1     [4]uint64
 	sl1     [4]uint64
-}
-
-var unpackInt64WidePermutes [64]unpackInt64WidePermute
-
-func init() {
-	for bitWidth := uint(1); bitWidth <= 32; bitWidth++ {
-		m := &unpackInt64Permutes[bitWidth]
-		for lane := uint(0); lane < 8; lane++ {
-			// At bitWidth 32, lane 7 computes word+1 == 8; VPERMD only uses
-			// the low 3 bits of each index so it wraps to word 0, and the
-			// bits it contributes are cleared by the 32 bit mask.
-			word := (lane * bitWidth) / 32
-			shift := (lane * bitWidth) % 32
-			if lane < 4 {
-				m.perm0[2*lane+0] = uint32(word)
-				m.perm0[2*lane+1] = uint32(word + 1)
-				m.shift0[lane] = uint64(shift)
-			} else {
-				m.perm1[2*(lane-4)+0] = uint32(word)
-				m.perm1[2*(lane-4)+1] = uint32(word + 1)
-				m.shift1[lane-4] = uint64(shift)
-			}
-		}
-	}
-	for bitWidth := uint(33); bitWidth <= 63; bitWidth++ {
-		m := &unpackInt64WidePermutes[bitWidth]
-		g := (4 * bitWidth) / 8
-		for lane := uint(0); lane < 8; lane++ {
-			base := uint(0)
-			if lane >= 4 {
-				base = 8 * g
-			}
-			rel := lane*bitWidth - base
-			word := rel / 32
-			shift := rel % 32
-			permLo, permHi := &m.permLo0, &m.permHi0
-			sr, sl := &m.sr0, &m.sl0
-			if lane >= 4 {
-				permLo, permHi, sr, sl = &m.permLo1, &m.permHi1, &m.sr1, &m.sl1
-			}
-			k := lane % 4
-			permLo[2*k+0] = uint32(word)
-			permLo[2*k+1] = uint32(word+1) & 7
-			permHi[2*k+0] = uint32(word+2) & 7
-			permHi[2*k+1] = uint32(word+3) & 7
-			sr[k] = uint64(shift)
-			sl[k] = uint64(64 - shift)
-		}
-	}
 }
 
 func unpackInt64(dst []int64, src []byte, bitWidth uint) {

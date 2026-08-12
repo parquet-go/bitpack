@@ -9,6 +9,8 @@ import (
 	"github.com/parquet-go/bitpack/unsafecast"
 )
 
+//go:generate go run gen_unpack_simd_amd64.go
+
 // This file provides implementations of the int32 bit unpacking algorithms
 // based on the simd/archsimd package, replacing the hand-written assembly of
 // unpack_int32_amd64.s when GOEXPERIMENT=simd is set.
@@ -57,48 +59,6 @@ type unpackInt32Shuffle struct {
 	sr1 [4]uint32
 	sl0 [4]uint32
 	sl1 [4]uint32
-}
-
-var unpackInt32Shuffles [32]unpackInt32Shuffle
-
-func init() {
-	for bitWidth := uint(1); bitWidth <= 31; bitWidth++ {
-		m := &unpackInt32Shuffles[bitWidth]
-		for i := range 16 {
-			m.lo0[i], m.lo1[i], m.hi0[i], m.hi1[i] = -128, -128, -128, -128
-		}
-		// For bit widths up to 16 all 8 values fit in the first 16 bytes, so
-		// lanes 4-7 index src[j:] directly and the kernel performs a single
-		// load; wider values straddle the boundary, so lanes 4-7 index a
-		// second load at src[j+g:].
-		g := uint(0)
-		if bitWidth > 16 {
-			g = (4 * bitWidth) / 8
-		}
-		for lane := uint(0); lane < 8; lane++ {
-			bitOffset := lane * bitWidth
-			firstByte := bitOffset / 8
-			shift := bitOffset % 8
-			byteCount := (shift + bitWidth + 7) / 8
-			lo, hi, base := &m.lo0, &m.hi0, uint(0)
-			if lane >= 4 {
-				lo, hi, base = &m.lo1, &m.hi1, g
-			}
-			for k := uint(0); k < min(byteCount, 4); k++ {
-				lo[(lane%4)*4+k] = int8(firstByte + k - base)
-			}
-			if byteCount == 5 {
-				hi[(lane%4)*4+3] = int8(firstByte + 4 - base)
-			}
-			if lane < 4 {
-				m.sr0[lane] = uint32(shift)
-				m.sl0[lane] = uint32(8 - shift)
-			} else {
-				m.sr1[lane-4] = uint32(shift)
-				m.sl1[lane-4] = uint32(8 - shift)
-			}
-		}
-	}
 }
 
 func unpackInt32(dst []int32, src []byte, bitWidth uint) {
