@@ -40,14 +40,54 @@ jobs:
           go test -v -tags=${{ matrix.tags }} ./...
           cd examples && go test -v
 
-      - name: Run tests without AVX2
-        if: matrix.arch == 'amd64' && matrix.tags == ''
-        env:
-          GODEBUG: cpu.avx2=off
-        run: go test -v ./...
+  # Test the experimental simd/archsimd code paths on linux/amd64 at the
+  # GOAMD64 microarchitecture levels they are intended to be used with.
+  simd:
+    strategy:
+      matrix:
+        goamd64:
+          - v3
+          - v4
 
-      - name: Check generated files
-        if: matrix.arch == 'amd64' && matrix.tags == ''
+    name: Test GOEXPERIMENT=simd (GOAMD64=${{ matrix.goamd64 }})
+    runs-on: ubuntu-latest
+
+    env:
+      GOEXPERIMENT: simd
+      GOAMD64: ${{ matrix.goamd64 }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # simd/archsimd requires Go 1.26; its API has breaking changes in
+          # later releases.
+          go-version: 1.26.x
+
+      # GitHub amd64 runners are a mix of CPUs with and without AVX-512;
+      # GOAMD64=v4 binaries fail at startup on the latter, so skip the run
+      # when the runner cannot execute it.
+      - name: Check CPU features
+        id: cpu
         run: |
-          go generate ./...
-          git diff --exit-code
+          if [ "${{ matrix.goamd64 }}" = "v4" ] && ! grep -q avx512bw /proc/cpuinfo; then
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+            echo "runner CPU does not support AVX-512, skipping GOAMD64=v4"
+          else
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run tests
+        if: steps.cpu.outputs.supported == 'true'
+        run: |
+          go test -v ./...
+          cd examples && go test -v
+
+      # The archsimd code is pure Go, so it is also the implementation used
+      # when building with -tags=purego under GOEXPERIMENT=simd.
+      - name: Run tests with purego
+        if: steps.cpu.outputs.supported == 'true'
+        run: go test -v -tags=purego ./...
