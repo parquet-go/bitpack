@@ -15,16 +15,26 @@ import (
 // unpack_int64_amd64.s and unpack_int64_{1,2,4,8}bit_amd64.s when
 // GOEXPERIMENT=simd is set.
 //
-// Bit widths 1 to 32 use the vectorized algorithm of the assembly: a
-// cross-lane 32 bit permutation (VPERMD) places the two words containing
-// each value in a 64 bit lane, giving a window that always contains the
-// full value, and a per-lane logical right shift + mask extracts it. Unlike
-// the assembly, which runs scalar specializations for bit widths 1-8, 16
-// and 32, the vector kernel is used for the whole 1-32 range: it is faster
-// than those scalar loops (the "AVX2" kernels of the specialized .s files
-// perform no vector work despite their names).
+// Bit widths 8, 16 and 32 use widening loads (VPMOVZXBQ/WQ/DQ) like the
+// assembly. Other bit widths up to 32 use the vectorized algorithm of the
+// assembly: a cross-lane 32 bit permutation (VPERMD) places the two words
+// containing each value in a 64 bit lane, giving a window that always
+// contains the full value, and a per-lane logical right shift + mask
+// extracts it.
 //
-// Bit widths 33 to 63 fall back to the scalar loop, and 64 is a copy.
+// Bit widths 33 to 63 have no vectorized equivalent in the assembly (it
+// uses generated scalar kernels); here they use a variation of the VPERMD
+// algorithm with two 64 bit windows per value: the low window is aligned
+// down to the containing 32 bit word (so the right shift stays below 32),
+// and the high window holds the two following words, shifted left by
+// 64-shift to contribute the bits the low window cannot reach. 4 values of
+// at most 63 bits plus the leading shift always fit the 8 words of a 32
+// byte load, so each group of 4 lanes performs one load and two
+// permutations. Word indices past the load wrap (VPERMD uses the low 3
+// bits) but every bit they contribute lands above the bit mask or above
+// bit 63 of the lane, so they never corrupt the result.
+//
+// Bit width 64 is a copy.
 
 // unpackInt64Permute holds the permutation and shift vectors used to unpack
 // 8 values of a given bit width from 32 bytes of input. The value at index
@@ -42,6 +52,24 @@ type unpackInt64Permute struct {
 }
 
 var unpackInt64Permutes [33]unpackInt64Permute
+
+// unpackInt64WidePermute holds the permutation and shift vectors used to
+// unpack 8 values of bit widths 33 to 63, in two groups of 4: group 1 reads
+// from a second load at the byte position of value 4. Each lane extracts
+// (lo >> shift) | (hi << (64 - shift)), with lo the 64 bit window at the 32
+// bit word containing the value and hi the 64 bit window after it.
+type unpackInt64WidePermute struct {
+	permLo0 [8]uint32
+	permHi0 [8]uint32
+	permLo1 [8]uint32
+	permHi1 [8]uint32
+	sr0     [4]uint64
+	sl0     [4]uint64
+	sr1     [4]uint64
+	sl1     [4]uint64
+}
+
+var unpackInt64WidePermutes [64]unpackInt64WidePermute
 
 func init() {
 	for bitWidth := uint(1); bitWidth <= 32; bitWidth++ {
@@ -63,6 +91,31 @@ func init() {
 			}
 		}
 	}
+	for bitWidth := uint(33); bitWidth <= 63; bitWidth++ {
+		m := &unpackInt64WidePermutes[bitWidth]
+		g := (4 * bitWidth) / 8
+		for lane := uint(0); lane < 8; lane++ {
+			base := uint(0)
+			if lane >= 4 {
+				base = 8 * g
+			}
+			rel := lane*bitWidth - base
+			word := rel / 32
+			shift := rel % 32
+			permLo, permHi := &m.permLo0, &m.permHi0
+			sr, sl := &m.sr0, &m.sl0
+			if lane >= 4 {
+				permLo, permHi, sr, sl = &m.permLo1, &m.permHi1, &m.sr1, &m.sl1
+			}
+			k := lane % 4
+			permLo[2*k+0] = uint32(word)
+			permLo[2*k+1] = uint32(word+1) & 7
+			permHi[2*k+0] = uint32(word+2) & 7
+			permHi[2*k+1] = uint32(word+3) & 7
+			sr[k] = uint64(shift)
+			sl[k] = uint64(64 - shift)
+		}
+	}
 }
 
 func unpackInt64(dst []int64, src []byte, bitWidth uint) {
@@ -75,13 +128,94 @@ func unpackInt64(dst []int64, src []byte, bitWidth uint) {
 	// loads of the last iteration and the word reads of the scalar tail stay
 	// in bounds.
 	src = src[:ByteCount(bitWidth*uint(len(dst)))+PaddingInt64]
+	hasAVX2 := archsimd.X86.AVX2()
 	switch {
-	case archsimd.X86.AVX2() && 1 <= bitWidth && bitWidth <= 32:
+	case hasAVX2 && (bitWidth == 8 || bitWidth == 16 || bitWidth == 32):
+		unpackInt64x8x16x32bits(dst, src, bitWidth)
+	case hasAVX2 && 1 <= bitWidth && bitWidth <= 32:
 		unpackInt64x1to32bits(dst, src, bitWidth)
+	case hasAVX2 && 33 <= bitWidth && bitWidth <= 63:
+		unpackInt64x33to63bits(dst, src, bitWidth)
 	case bitWidth <= 8:
 		unpackInt64x1to8bits(dst, src, bitWidth)
 	default:
 		unpackInt64Default(dst, src, bitWidth)
+	}
+}
+
+// unpackInt64x8x16x32bits unpacks values of bit widths 8, 16 and 32 with
+// zero-extending widening loads, 4 values per instruction.
+func unpackInt64x8x16x32bits(dst []int64, src []byte, bitWidth uint) {
+	n := (len(dst) / 8) * 8
+	in := unsafe.Pointer(unsafe.SliceData(src))
+	op := unsafe.Pointer(unsafe.SliceData(dst))
+	// See unpackInt64x1to32bits for why the loops walk raw pointers.
+	switch bitWidth {
+	case 8:
+		for range n / 8 {
+			archsimd.LoadUint8x16((*[16]uint8)(in)).ExtendLo4ToUint64().Store((*[4]uint64)(op))
+			archsimd.LoadUint8x16((*[16]uint8)(unsafe.Add(in, 4))).ExtendLo4ToUint64().Store((*[4]uint64)(unsafe.Add(op, 32)))
+			in = unsafe.Add(in, 8)
+			op = unsafe.Add(op, 64)
+		}
+	case 16:
+		for range n / 8 {
+			archsimd.LoadUint16x8((*[8]uint16)(in)).ExtendLo4ToUint64().Store((*[4]uint64)(op))
+			archsimd.LoadUint16x8((*[8]uint16)(unsafe.Add(in, 8))).ExtendLo4ToUint64().Store((*[4]uint64)(unsafe.Add(op, 32)))
+			in = unsafe.Add(in, 16)
+			op = unsafe.Add(op, 64)
+		}
+	default:
+		for range n / 8 {
+			archsimd.LoadUint32x4((*[4]uint32)(in)).ExtendToUint64().Store((*[4]uint64)(op))
+			archsimd.LoadUint32x4((*[4]uint32)(unsafe.Add(in, 16))).ExtendToUint64().Store((*[4]uint64)(unsafe.Add(op, 32)))
+			in = unsafe.Add(in, 32)
+			op = unsafe.Add(op, 64)
+		}
+	}
+	archsimd.ClearAVXUpperBits()
+	if n < len(dst) {
+		unpackInt64Default(dst[n:], src[(uint(n)/8)*bitWidth:], bitWidth)
+	}
+}
+
+// unpackInt64x33to63bits unpacks values of bit widths 33 to 63 in two
+// groups of 4 lanes per iteration; see the file comment for the two-window
+// construction.
+func unpackInt64x33to63bits(dst []int64, src []byte, bitWidth uint) {
+	n := (len(dst) / 8) * 8
+	if n > 0 {
+		m := &unpackInt64WidePermutes[bitWidth]
+		permLo0 := archsimd.LoadUint32x8(&m.permLo0)
+		permHi0 := archsimd.LoadUint32x8(&m.permHi0)
+		permLo1 := archsimd.LoadUint32x8(&m.permLo1)
+		permHi1 := archsimd.LoadUint32x8(&m.permHi1)
+		sr0 := archsimd.LoadUint64x4(&m.sr0)
+		sl0 := archsimd.LoadUint64x4(&m.sl0)
+		sr1 := archsimd.LoadUint64x4(&m.sr1)
+		sl1 := archsimd.LoadUint64x4(&m.sl1)
+		bitMask := archsimd.BroadcastUint64x4(uint64(1)<<bitWidth - 1)
+		g := (4 * bitWidth) / 8
+
+		// See unpackInt64x1to32bits for why the loop walks raw pointers.
+		in := unsafe.Pointer(unsafe.SliceData(src))
+		op := unsafe.Pointer(unsafe.SliceData(dst))
+		for range n / 8 {
+			w0 := archsimd.LoadUint8x32((*[32]uint8)(in)).AsUint32x8()
+			w1 := archsimd.LoadUint8x32((*[32]uint8)(unsafe.Add(in, g))).AsUint32x8()
+			w0.Permute(permLo0).AsUint64x4().ShiftRight(sr0).
+				Or(w0.Permute(permHi0).AsUint64x4().ShiftLeft(sl0)).
+				And(bitMask).Store((*[4]uint64)(op))
+			w1.Permute(permLo1).AsUint64x4().ShiftRight(sr1).
+				Or(w1.Permute(permHi1).AsUint64x4().ShiftLeft(sl1)).
+				And(bitMask).Store((*[4]uint64)(unsafe.Add(op, 32)))
+			in = unsafe.Add(in, bitWidth)
+			op = unsafe.Add(op, 64)
+		}
+		archsimd.ClearAVXUpperBits()
+	}
+	if n < len(dst) {
+		unpackInt64Default(dst[n:], src[(uint(n)/8)*bitWidth:], bitWidth)
 	}
 }
 
