@@ -37,8 +37,8 @@ kernels are implemented with the experimental
 [`simd/archsimd`](https://pkg.go.dev/simd/archsimd) package instead of the
 hand-written assembly. The algorithms are the same; the Go versions are
 maintainable, feature-gated by the compiler, and can be inlined and
-instrumented like regular Go code. Go 1.27 revised the `archsimd` API, so
-that release has its own copy of the kernels.
+instrumented like regular Go code. Go 1.27 revised the `archsimd` API, so that release has its own copy of the
+kernels. Widths where that copy is slower than the assembly keep the assembly.
 
 ```bash
 GOEXPERIMENT=simd GOAMD64=v3 go build ./...
