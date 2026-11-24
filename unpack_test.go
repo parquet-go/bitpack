@@ -169,6 +169,96 @@ func FuzzUnpackUint32(f *testing.F) {
 	})
 }
 
+// TestUnpackInt32MatchesBitReference compares Unpack with an independent
+// little-endian bit reader. Padding bytes are 0xFF so a kernel that pulls in
+// bits past the packed values fails the comparison. The non-simd and simd
+// builds both run this test, so a passing pair of runs means those
+// implementations agree with the same reference.
+func TestUnpackInt32MatchesBitReference(t *testing.T) {
+	lengths := []int{0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 200}
+	for bitWidth := uint(0); bitWidth <= 32; bitWidth++ {
+		t.Run(fmt.Sprintf("bitWidth=%d", bitWidth), func(t *testing.T) {
+			prng := rand.New(rand.NewSource(int64(bitWidth) + 1))
+			mask := ^uint32(0)
+			if bitWidth < 32 {
+				mask = uint32(1)<<bitWidth - 1
+			}
+			for _, n := range lengths {
+				values := make([]int32, n)
+				raw := make([]uint64, n)
+				for i := range values {
+					values[i] = int32(prng.Uint32() & mask)
+					raw[i] = uint64(uint32(values[i]))
+				}
+				size := bitpack.ByteCount(bitWidth * uint(n))
+				buf := make([]byte, size+bitpack.PaddingInt32)
+				writeBits(buf[:size], raw, bitWidth)
+				for i := size; i < len(buf); i++ {
+					buf[i] = 0xFF
+				}
+				got := make([]int32, n)
+				// Pass the padded buffer. Unpack's contract is that those
+				// bytes may be read; they must not affect the values.
+				bitpack.Unpack(got, buf, bitWidth)
+				if !slices.Equal(got, values) {
+					t.Fatalf("length=%d\nwant: %v\ngot:  %v", n, values, got)
+				}
+			}
+		})
+	}
+}
+
+// TestUnpackInt64MatchesBitReference is the int64 counterpart of
+// TestUnpackInt32MatchesBitReference.
+func TestUnpackInt64MatchesBitReference(t *testing.T) {
+	lengths := []int{0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 200}
+	for bitWidth := uint(0); bitWidth <= 64; bitWidth++ {
+		t.Run(fmt.Sprintf("bitWidth=%d", bitWidth), func(t *testing.T) {
+			prng := rand.New(rand.NewSource(int64(bitWidth) + 100))
+			mask := ^uint64(0)
+			if bitWidth < 64 {
+				mask = uint64(1)<<bitWidth - 1
+			}
+			for _, n := range lengths {
+				values := make([]int64, n)
+				raw := make([]uint64, n)
+				for i := range values {
+					values[i] = int64(prng.Uint64() & mask)
+					raw[i] = uint64(values[i])
+				}
+				size := bitpack.ByteCount(bitWidth * uint(n))
+				buf := make([]byte, size+bitpack.PaddingInt64)
+				writeBits(buf[:size], raw, bitWidth)
+				for i := size; i < len(buf); i++ {
+					buf[i] = 0xFF
+				}
+				got := make([]int64, n)
+				// Pass the padded buffer. Unpack's contract is that those
+				// bytes may be read; they must not affect the values.
+				bitpack.Unpack(got, buf, bitWidth)
+				if !slices.Equal(got, values) {
+					t.Fatalf("length=%d\nwant: %v\ngot:  %v", n, values, got)
+				}
+			}
+		})
+	}
+}
+
+// writeBits stores each value in little-endian bit order, which is the
+// layout Pack and Unpack use.
+func writeBits(dst []byte, values []uint64, bitWidth uint) {
+	for i, v := range values {
+		bitOffset := uint(i) * bitWidth
+		for b := uint(0); b < bitWidth; b++ {
+			if v&(uint64(1)<<b) == 0 {
+				continue
+			}
+			pos := bitOffset + b
+			dst[pos/8] |= 1 << (pos % 8)
+		}
+	}
+}
+
 func BenchmarkUnpackInt32(b *testing.B) {
 	for bitWidth := uint(1); bitWidth <= 32; bitWidth++ {
 		block := [blockSize]int32{}

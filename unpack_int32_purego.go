@@ -1,4 +1,4 @@
-//go:build (purego || (!amd64 && !arm64)) && (!amd64 || !goexperiment.simd || go1.27)
+//go:build (purego || (!amd64 && !arm64)) && (!amd64 || !goexperiment.simd)
 
 package bitpack
 
